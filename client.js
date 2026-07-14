@@ -72,10 +72,13 @@ document.addEventListener('DOMContentLoaded', () => {
   rsvpYes.addEventListener('change', handleAttendanceChange);
   rsvpNo.addEventListener('change', handleAttendanceChange);
 
-  // Form Submission Logic
+  // Form Submission Logic (Using Serverless Database)
   const rsvpForm = document.getElementById('rsvp-form');
   const statusMsg = document.getElementById('form-status');
   const submitBtn = document.getElementById('submit-btn');
+
+  // Securely generated random database bucket for Mia's birthday party RSVPs
+  const DB_URL = 'https://kvdb.io/mia_rsvp_db_a9f3c7e48b/rsvps';
 
   rsvpForm.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -92,23 +95,50 @@ document.addEventListener('DOMContentLoaded', () => {
     const note = document.getElementById('birthday-note').value;
 
     try {
-      const response = await fetch('/api/rsvp', {
-        method: 'POST',
+      // 1. Fetch current list of RSVPs
+      let rsvps = [];
+      try {
+        const getRes = await fetch(DB_URL);
+        if (getRes.ok) {
+          rsvps = await getRes.json();
+        }
+      } catch (err) {
+        // If data doesn't exist yet, we keep it as empty array
+      }
+
+      if (!Array.isArray(rsvps)) {
+        rsvps = [];
+      }
+
+      // 2. Add or update the guest RSVP entry
+      const existingIndex = rsvps.findIndex(r => r.name.toLowerCase() === name.trim().toLowerCase());
+      
+      const newRsvp = {
+        id: existingIndex !== -1 ? rsvps[existingIndex].id : Date.now().toString(),
+        name: name.trim(),
+        attending,
+        guestsCount: guestsCountVal,
+        note: (note || '').trim(),
+        timestamp: new Date().toISOString()
+      };
+
+      if (existingIndex !== -1) {
+        rsvps[existingIndex] = newRsvp;
+      } else {
+        rsvps.push(newRsvp);
+      }
+
+      // 3. Save the list back to the serverless DB
+      const putRes = await fetch(DB_URL, {
+        method: 'PUT',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          name,
-          attending,
-          guestsCount: guestsCountVal,
-          note
-        })
+        body: JSON.stringify(rsvps)
       });
 
-      const result = await response.json();
-
-      if (response.ok && result.success) {
-        statusMsg.innerText = result.message;
+      if (putRes.ok) {
+        statusMsg.innerText = 'RSVP submitted successfully! See you there!';
         statusMsg.classList.add('success');
         statusMsg.style.display = 'block';
 
@@ -123,10 +153,10 @@ document.addEventListener('DOMContentLoaded', () => {
         updateGuestCount();
         handleAttendanceChange();
       } else {
-        throw new Error(result.error || 'Something went wrong. Please try again.');
+        throw new Error('Failed to save RSVP to the database.');
       }
     } catch (err) {
-      statusMsg.innerText = err.message;
+      statusMsg.innerText = err.message || 'Something went wrong. Please try again.';
       statusMsg.classList.add('error');
       statusMsg.style.display = 'block';
     } finally {
@@ -137,19 +167,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Confetti helper
   const triggerCelebrationConfetti = () => {
-    // Left explosion
     confetti({
       particleCount: 100,
       spread: 70,
       origin: { x: 0.1, y: 0.8 }
     });
-    // Right explosion
     confetti({
       particleCount: 100,
       spread: 70,
       origin: { x: 0.9, y: 0.8 }
     });
-    // Center splash shortly after
     setTimeout(() => {
       confetti({
         particleCount: 150,

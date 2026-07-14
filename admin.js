@@ -1,7 +1,8 @@
 document.addEventListener('DOMContentLoaded', () => {
   // Config & State
-  const API_RSVP_URL = '/api/rsvps';
-  let adminToken = '';
+  const DB_URL = 'https://kvdb.io/mia_rsvp_db_a9f3c7e48b/rsvps';
+  const PASSWORD = 'secret123'; // Passcode for dashboard
+  let isUnlocked = false;
 
   // DOM Elements
   const lockScreen = document.getElementById('lock-screen');
@@ -17,20 +18,17 @@ document.addEventListener('DOMContentLoaded', () => {
   const tableBody = document.getElementById('rsvp-table-body');
   const emptyState = document.getElementById('table-empty-state');
 
-  // Check URL or SessionStorage for token
+  // Check URL or SessionStorage for token bypass
   const init = () => {
     const urlParams = new URLSearchParams(window.location.search);
     const tokenFromUrl = urlParams.get('token');
     const tokenFromStorage = sessionStorage.getItem('adminToken');
 
-    if (tokenFromUrl) {
-      adminToken = tokenFromUrl;
-      sessionStorage.setItem('adminToken', adminToken);
+    if (tokenFromUrl === PASSWORD || tokenFromStorage === PASSWORD) {
+      isUnlocked = true;
+      sessionStorage.setItem('adminToken', PASSWORD);
       // Clean URL parameters for safety
       window.history.replaceState({}, document.title, window.location.pathname);
-      loadDashboard();
-    } else if (tokenFromStorage) {
-      adminToken = tokenFromStorage;
       loadDashboard();
     } else {
       showLockScreen();
@@ -51,59 +49,42 @@ document.addEventListener('DOMContentLoaded', () => {
   lockForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const tokenInput = passcodeInput.value.trim();
-    if (!tokenInput) return;
-
-    lockError.style.display = 'none';
-
-    // Test token
-    const success = await testAndSetToken(tokenInput);
-    if (success) {
+    
+    if (tokenInput === PASSWORD) {
+      isUnlocked = true;
+      sessionStorage.setItem('adminToken', PASSWORD);
       hideLockScreen();
+      loadDashboard();
     } else {
       lockError.style.display = 'block';
       passcodeInput.value = '';
     }
   });
 
-  const testAndSetToken = async (token) => {
-    try {
-      const res = await fetch(`${API_RSVP_URL}?token=${token}`);
-      if (res.ok) {
-        adminToken = token;
-        sessionStorage.setItem('adminToken', token);
-        const result = await res.json();
-        renderDashboardData(result.data);
-        return true;
-      }
-      return false;
-    } catch (err) {
-      console.error('Connection error testing token:', err);
-      return false;
-    }
-  };
-
   const loadDashboard = async () => {
+    if (!isUnlocked) return;
+
     try {
-      const res = await fetch(`${API_RSVP_URL}?token=${adminToken}`);
+      const res = await fetch(DB_URL);
       if (res.ok) {
-        hideLockScreen();
-        const result = await res.json();
-        renderDashboardData(result.data);
+        const data = await res.json();
+        renderDashboardData(data);
+      } else if (res.status === 404) {
+        // Database is empty/doesn't exist yet
+        renderDashboardData([]);
       } else {
-        // Token is invalid, clear storage and show lock screen
-        sessionStorage.removeItem('adminToken');
-        showLockScreen();
+        throw new Error('Database response error.');
       }
     } catch (err) {
       console.error('Error fetching RSVPs:', err);
-      showLockScreen();
+      renderDashboardData([]);
     }
   };
 
   const renderDashboardData = (rsvps) => {
     tableBody.innerHTML = '';
 
-    if (!rsvps || rsvps.length === 0) {
+    if (!rsvps || !Array.isArray(rsvps) || rsvps.length === 0) {
       totalRsvpsDisplay.innerText = '0';
       attendingCountDisplay.innerText = '0';
       declinedCountDisplay.innerText = '0';
@@ -182,23 +163,37 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!confirm('Are you sure you want to remove this RSVP entry?')) return;
 
     try {
-      const response = await fetch(`${API_RSVP_URL}/${id}?token=${adminToken}`, {
-        method: 'DELETE'
-      });
-      const result = await response.json();
+      // 1. Fetch current list
+      const res = await fetch(DB_URL);
+      if (!res.ok) throw new Error('Could not fetch data.');
+      
+      let rsvps = await res.json();
+      if (!Array.isArray(rsvps)) return;
 
-      if (response.ok && result.success) {
+      // 2. Filter out entry
+      rsvps = rsvps.filter(r => r.id !== id);
+
+      // 3. Save back
+      const putRes = await fetch(DB_URL, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(rsvps)
+      });
+
+      if (putRes.ok) {
         // Remove row from UI with a nice transition
         const row = document.getElementById(`rsvp-row-${id}`);
         if (row) {
           row.style.opacity = '0';
           row.style.transform = 'scale(0.95)';
           setTimeout(() => {
-            loadDashboard(); // Reload to update statistics and correct state
+            loadDashboard(); // Reload data to update numbers and tables
           }, 300);
         }
       } else {
-        alert(result.error || 'Failed to delete RSVP.');
+        alert('Failed to delete RSVP from database.');
       }
     } catch (err) {
       console.error('Error deleting RSVP:', err);
