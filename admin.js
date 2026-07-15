@@ -173,12 +173,9 @@ document.addEventListener('DOMContentLoaded', () => {
       // 2. Filter out entry
       rsvps = rsvps.filter(r => r.id !== id);
 
-      // 3. Save back
+      // 3. Save back using POST (Simple request format to bypass CORS preflight)
       const putRes = await fetch(DB_URL, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        method: 'POST',
         body: JSON.stringify(rsvps)
       });
 
