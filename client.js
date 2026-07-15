@@ -128,12 +128,9 @@ document.addEventListener('DOMContentLoaded', () => {
         rsvps.push(newRsvp);
       }
 
-      // 3. Save the list back to the serverless DB
+      // 3. Save the list back to the serverless DB using POST (Simple request format to bypass CORS preflight)
       const putRes = await fetch(DB_URL, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        method: 'POST',
         body: JSON.stringify(rsvps)
       });
 
